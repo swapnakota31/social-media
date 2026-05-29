@@ -16,7 +16,7 @@ const signup = async (req, res) => {
             `
             INSERT INTO users (username, email, password)
             VALUES ($1, $2, $3)
-            RETURNING *
+            RETURNING id, username, email
             `,
             [username, email, hashedPassword]
         );
@@ -116,7 +116,13 @@ const login = async (req, res) => {
 
             message: "Login successful 🚀",
 
-            token
+            token,
+
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email
+            }
 
         });
 

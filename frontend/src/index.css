@@ -80,6 +80,7 @@ body {
   resize: none;
 
 }
+
 * {
 
   margin: 0;
@@ -446,5 +447,62 @@ body {
     padding-bottom: 70px;
 
   }
+
+}
+.comment-section {
+
+  margin-top: 20px;
+
+}
+
+.comment-section input {
+
+  width: 100%;
+
+  padding: 10px;
+
+  border: 1px solid #ccc;
+
+  border-radius: 8px;
+
+  margin-bottom: 10px;
+
+}
+
+.comment-section button {
+
+  padding: 8px 15px;
+
+  border: none;
+
+  background: #1877f2;
+
+  color: white;
+
+  border-radius: 8px;
+
+  cursor: pointer;
+
+}
+
+.comments-list {
+
+  margin-top: 15px;
+
+  display: flex;
+
+  flex-direction: column;
+
+  gap: 10px;
+
+}
+
+.comment-item {
+
+  background: #f0f2f5;
+
+  padding: 10px;
+
+  border-radius: 8px;
 
 }

@@ -33,6 +33,8 @@ function Login() {
     if (response.ok) {
 
       localStorage.setItem("token", data.token);
+      localStorage.setItem("username", data.user.username);
+      localStorage.setItem("userId", data.user.id);
 
       alert("Login successful 🚀");
       navigate("/feed");    

@@ -1,18 +1,31 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
-import { useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useNavigate, Link } from "react-router-dom";
 
 function Feed() {
 
   const [content, setContent] = useState("");
   const [posts, setPosts] = useState([]);
+  const [comments, setComments] = useState({});
+  const [commentInputs, setCommentInputs] = useState({});
+  const [openComments, setOpenComments] = useState({});
+  const [feedError, setFeedError] = useState("");
+  const [loadingPosts, setLoadingPosts] = useState(false);
 
   const navigate = useNavigate();
+  const token = localStorage.getItem("token");
+  const currentUsername = localStorage.getItem("username");
+  const currentUserId = localStorage.getItem("userId");
+
+  const authHeaders = {
+    Authorization: `Bearer ${token}`
+  };
 
   const handleLogout = () => {
 
     localStorage.removeItem("token");
+    localStorage.removeItem("username");
+    localStorage.removeItem("userId");
 
     navigate("/");
 
@@ -27,6 +40,7 @@ function Feed() {
 
         headers: {
           "Content-Type": "application/json",
+          ...authHeaders,
         },
 
         body: JSON.stringify({
@@ -42,6 +56,7 @@ function Feed() {
     if (response.ok) {
 
       alert("Post created 🚀");
+
       fetchPosts();
 
       setContent("");
@@ -53,17 +68,42 @@ function Feed() {
     }
 
   };
+
   const fetchPosts = async () => {
+    try {
+      setLoadingPosts(true);
+      setFeedError("");
 
-  const response = await fetch(
-    "http://localhost:3000/api/posts"
-  );
+      const response = await fetch(
+        "http://localhost:3000/api/posts",
+        {
+          headers: authHeaders,
+        }
+      );
 
-  const data = await response.json();
+      const data = await response.json();
 
-  setPosts(data);
+      if (!response.ok) {
+        setPosts([]);
+        setFeedError(data.message || "Failed to load posts");
+        return;
+      }
 
-};
+      const safePosts = Array.isArray(data) ? data : [];
+      setPosts(safePosts);
+
+      safePosts.forEach((post) => {
+        fetchComments(post.id);
+      });
+    } catch (error) {
+      console.log(error);
+      setPosts([]);
+      setFeedError("Failed to load posts");
+    } finally {
+      setLoadingPosts(false);
+    }
+
+  };
 
   useEffect(() => {
 
@@ -71,29 +111,136 @@ function Feed() {
 
   }, []);
 
-return (
+  const handleComment = async (postId) => {
 
-  <div className="app-layout">
+    console.log(postId);
 
-    <nav className="navbar">
+    console.log(commentInputs[postId]);
 
-      <h2>SocialFeed 🚀</h2>
+    const response = await fetch(
+      "http://localhost:3000/api/comments",
+      {
+        method: "POST",
 
-      <button onClick={handleLogout}>
-        Logout
-      </button>
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+        },
 
-    </nav>
+        body: JSON.stringify({
 
-    <div className="main-layout">
+          post_id: postId,
 
-      <aside className="sidebar">
+          content: commentInputs[postId]
 
-        <ul>
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    console.log(data);
+
+    if (response.ok) {
+
+      fetchComments(postId);
+
+      setCommentInputs((prev) => ({
+
+        ...prev,
+
+        [postId]: ""
+
+      }));
+
+    }
+
+  };
+
+  const fetchComments = async (postId) => {
+
+    const response = await fetch(
+      `http://localhost:3000/api/comments/${postId}`
+      ,
+      {
+        headers: authHeaders,
+      }
+    );
+
+    const data = await response.json();
+
+    setComments((prev) => ({
+
+      ...prev,
+
+      [postId]: data
+
+    }));
+
+  };
+  const handleLike = async (postId) => {
+    const likeRequests = [
+      {
+        url: `http://localhost:3000/api/posts/${postId}/like`,
+        method: "POST",
+      },
+      {
+        url: `http://localhost:3000/api/posts/like/${postId}`,
+        method: "PUT",
+      },
+    ];
+
+    for (const request of likeRequests) {
+      const response = await fetch(request.url, {
+        method: request.method,
+        headers: authHeaders,
+      });
+
+      if (response.ok) {
+        fetchPosts();
+        return;
+      }
+
+      if (response.status !== 404) {
+        break;
+      }
+    }
+
+};
+
+  return (
+
+    <div className="app-layout">
+
+      <nav className="navbar">
+
+        <h2>SocialFeed 🚀</h2>
+
+        <small>
+          <Link to={`/profile/${currentUserId}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+            Signed in as {currentUsername}
+          </Link>
+        </small>
+
+        <button onClick={handleLogout}>
+          Logout
+        </button>
+
+      </nav>
+
+      <div className="main-layout">
+
+        <aside className="sidebar">
+
+          <ul>
 
           <li>🏠 Home</li>
 
-          <li>👤 Profile</li>
+          <li>
+            <Link to={`/profile/${currentUserId}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+              👤 Profile
+            </Link>
+          </li>
 
           <li>🔍 Explore</li>
 
@@ -101,99 +248,186 @@ return (
 
         </ul>
 
-      </aside>
+        </aside>
 
-      <main className="feed-section">
+        <main className="feed-section">
 
-        <div className="create-post">
+          <div className="create-post">
 
-          <textarea
-            placeholder="What's on your mind?"
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-          />
+            <textarea
+              placeholder="What's on your mind?"
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+            />
 
-          <button onClick={handleCreatePost}>
-            Create Post
-          </button>
+            <button onClick={handleCreatePost}>
+              Create Post
+            </button>
 
-        </div>
+          </div>
 
-        <div className="posts-container">
+          <div className="posts-container">
 
-          {posts.map((post) => (
+            {loadingPosts && <p>Loading posts...</p>}
 
-            <div
-              key={post.id}
-              className="post-card"
-            >
+            {feedError && <p>{feedError}</p>}
 
-              <div className="post-header">
+            {posts.map((post) => (
 
-                <div className="avatar">
-                  S
+              <div
+                key={post.id}
+                className="post-card"
+              >
+
+                <div className="post-header">
+
+                  <Link to={`/profile/${post.user_id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                    <div className="avatar">
+                      {post.username?.[0] || 'U'}
+                    </div>
+                  </Link>
+
+                  <div>
+
+                    <h4>
+                      <Link to={`/profile/${post.user_id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                        {post.username}
+                      </Link>
+                    </h4>
+
+                    <small>
+                      {new Date(post.created_at).toLocaleString()}
+                    </small>
+
+                  </div>
+
                 </div>
 
-                <div>
+                <p>{post.content}</p>
 
-                  <h4>Swapna</h4>
+                <div className="post-actions">
 
-                  <small>
-                    {new Date(post.created_at).toLocaleString()}
-                  </small>
+                  <span
+  onClick={() => handleLike(post.id)}
+  style={{ cursor: "pointer" }}
+>
+
+  {post.is_liked_by_me ? "💔 Unlike" : "❤️ Like"} {post.likes || 0}
+
+</span>
+
+                  <span
+                    onClick={() =>
+                      setOpenComments((prev) => ({
+
+                        ...prev,
+
+                        [post.id]: !prev[post.id]
+
+                      }))
+                    }
+                    style={{ cursor: "pointer" }}
+                  >
+
+                    💬 {comments[post.id]?.length || 0} Comments
+
+                  </span>
 
                 </div>
+
+                {openComments[post.id] && (
+
+                  <div className="comment-section">
+
+                    <input
+                      type="text"
+                      placeholder="Write a comment..."
+                      value={commentInputs[post.id] || ""}
+                      onChange={(e) =>
+                        setCommentInputs((prev) => ({
+
+                          ...prev,
+
+                          [post.id]: e.target.value
+
+                        }))
+                      }
+                    />
+
+                    <button
+                      onClick={() => handleComment(post.id)}
+                    >
+                      Comment
+                    </button>
+
+                    <div className="comments-list">
+
+                      {comments[post.id]?.map((comment) => (
+
+                        <div
+                          key={comment.id}
+                          className="comment-item"
+                        >
+
+                          <small>{comment.username}</small>
+                          <p>{comment.content}</p>
+
+                        </div>
+
+                      ))}
+
+                      {Array.isArray(post.liked_by) && post.liked_by.length > 0 && (
+                        <small>
+                          Liked by {post.liked_by.map((user) => user.username).join(", ")}
+                        </small>
+                      )}
+
+                    </div>
+
+                  </div>
+
+                )}
 
               </div>
 
-              <p>{post.content}</p>
+            ))}
 
-              <div className="post-actions">
+          </div>
 
-                <span>❤️ Like</span>
+        </main>
 
-                <span>💬 Comment</span>
+        <aside className="right-sidebar">
 
-              </div>
+          <h3>Trends 🔥</h3>
 
-            </div>
+          <p>#React</p>
 
-          ))}
+          <p>#NodeJS</p>
 
-        </div>
+          <p>#PostgreSQL</p>
 
-      </main>
+        </aside>
 
-      <aside className="right-sidebar">
+      </div>
 
-        <h3>Trends 🔥</h3>
+      <div className="mobile-nav">
 
-        <p>#React</p>
+        <span>🏠</span>
 
-        <p>#NodeJS</p>
+        <span>🔍</span>
 
-        <p>#PostgreSQL</p>
+        <span>➕</span>
 
-      </aside>
+        <span>❤️</span>
 
-    </div>
+        <span>👤</span>
 
-    <div className="mobile-nav">
-
-      <span>🏠</span>
-
-      <span>🔍</span>
-
-      <span>➕</span>
-
-      <span>❤️</span>
-
-      <span>👤</span>
+      </div>
 
     </div>
 
-  </div>
+  );
 
-);
 }
+
 export default Feed;
