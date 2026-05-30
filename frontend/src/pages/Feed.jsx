@@ -1,433 +1,239 @@
-import { useState, useEffect } from "react";
-
-import { useNavigate, Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import PostCard from "../components/PostCard";
+import PostComposer from "../components/PostComposer";
+import SocialNavbar from "../components/SocialNavbar";
+import { createComment, createPost, fetchComments, fetchFeed, toggleLike } from "../services/socialApi";
 
 function Feed() {
-
-  const [content, setContent] = useState("");
-  const [posts, setPosts] = useState([]);
-  const [comments, setComments] = useState({});
-  const [commentInputs, setCommentInputs] = useState({});
-  const [openComments, setOpenComments] = useState({});
-  const [feedError, setFeedError] = useState("");
-  const [loadingPosts, setLoadingPosts] = useState(false);
-
   const navigate = useNavigate();
-  const token = localStorage.getItem("token");
-  const currentUsername = localStorage.getItem("username");
-  const currentUserId = localStorage.getItem("userId");
+  const sentinelRef = useRef(null);
+  const [posts, setPosts] = useState([]);
+  const [commentsByPost, setCommentsByPost] = useState({});
+  const [commentDrafts, setCommentDrafts] = useState({});
+  const [replyTargets, setReplyTargets] = useState({});
+  const [openComments, setOpenComments] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+  const [cursor, setCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [publishing, setPublishing] = useState(false);
 
-  const authHeaders = {
-    Authorization: `Bearer ${token}`
+  const currentUser = {
+    id: localStorage.getItem("userId"),
+    username: localStorage.getItem("username"),
+    bio: localStorage.getItem("bio"),
+    profile_pic: localStorage.getItem("profile_pic"),
   };
 
   const handleLogout = () => {
-
     localStorage.removeItem("token");
     localStorage.removeItem("username");
     localStorage.removeItem("userId");
-
+    localStorage.removeItem("profile_pic");
+    localStorage.removeItem("bio");
     navigate("/");
-
   };
 
-  const handleCreatePost = async () => {
-
-    const response = await fetch(
-      "http://localhost:3000/api/posts",
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders,
-        },
-
-        body: JSON.stringify({
-          content,
-        }),
-      }
-    );
-
-    const data = await response.json();
-
-    console.log(data);
-
-    if (response.ok) {
-
-      alert("Post created 🚀");
-
-      fetchPosts();
-
-      setContent("");
-
-    } else {
-
-      alert(data.message);
-
-    }
-
-  };
-
-  const fetchPosts = async () => {
+  const loadFeed = async ({ append = false, nextCursor = null } = {}) => {
     try {
-      setLoadingPosts(true);
-      setFeedError("");
+      append ? setLoadingMore(true) : setLoading(true);
+      setError("");
 
-      const response = await fetch(
-        "http://localhost:3000/api/posts",
-        {
-          headers: authHeaders,
-        }
-      );
+      const data = await fetchFeed({ cursor: nextCursor || undefined });
+      const incoming = data.posts || [];
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        setPosts([]);
-        setFeedError(data.message || "Failed to load posts");
-        return;
-      }
-
-      const safePosts = Array.isArray(data) ? data : [];
-      setPosts(safePosts);
-
-      safePosts.forEach((post) => {
-        fetchComments(post.id);
+      setPosts((current) => {
+        const merged = append ? [...current, ...incoming] : incoming;
+        const seen = new Set();
+        return merged.filter((post) => {
+          if (seen.has(post.id)) {
+            return false;
+          }
+          seen.add(post.id);
+          return true;
+        });
       });
-    } catch (error) {
-      console.log(error);
-      setPosts([]);
-      setFeedError("Failed to load posts");
-    } finally {
-      setLoadingPosts(false);
-    }
 
+      setCursor(data.nextCursor || null);
+      setHasMore(Boolean(data.nextCursor) && incoming.length > 0);
+
+      if (incoming.length > 0) {
+        await Promise.all(incoming.map((post) => loadPostComments(post.id)));
+      }
+    } catch (requestError) {
+      setError(requestError.message || "Failed to load feed");
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  };
+
+  const loadPostComments = async (postId) => {
+    const data = await fetchComments(postId);
+    setCommentsByPost((current) => ({
+      ...current,
+      [postId]: data.comments || [],
+    }));
   };
 
   useEffect(() => {
-
-    fetchPosts();
-
+    loadFeed();
   }, []);
 
-  const handleComment = async (postId) => {
-
-    console.log(postId);
-
-    console.log(commentInputs[postId]);
-
-    const response = await fetch(
-      "http://localhost:3000/api/comments",
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders,
-        },
-
-        body: JSON.stringify({
-
-          post_id: postId,
-
-          content: commentInputs[postId]
-
-        }),
-      }
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasMore && !loadingMore && cursor) {
+          loadFeed({ append: true, nextCursor: cursor });
+        }
+      },
+      { threshold: 0.15 }
     );
 
-    const data = await response.json();
-
-    console.log(data);
-
-    if (response.ok) {
-
-      fetchComments(postId);
-
-      setCommentInputs((prev) => ({
-
-        ...prev,
-
-        [postId]: ""
-
-      }));
-
+    if (sentinelRef.current) {
+      observer.observe(sentinelRef.current);
     }
 
+    return () => observer.disconnect();
+  }, [cursor, hasMore, loadingMore]);
+
+  const handleCreatePost = async ({ content, mediaUrls }) => {
+    try {
+      setPublishing(true);
+      const data = await createPost({ content, mediaUrls });
+      setPosts((current) => [data.post, ...current]);
+      if (data.post?.id) {
+        await loadPostComments(data.post.id);
+      }
+    } finally {
+      setPublishing(false);
+    }
   };
 
-  const fetchComments = async (postId) => {
-
-    const response = await fetch(
-      `http://localhost:3000/api/comments/${postId}`
-      ,
-      {
-        headers: authHeaders,
-      }
-    );
-
-    const data = await response.json();
-
-    setComments((prev) => ({
-
-      ...prev,
-
-      [postId]: data
-
-    }));
-
+  const handleToggleLike = async (postId) => {
+    const data = await toggleLike(postId);
+    setPosts((current) => current.map((post) => (post.id === postId ? data.post : post)));
   };
-  const handleLike = async (postId) => {
-    const likeRequests = [
-      {
-        url: `http://localhost:3000/api/posts/${postId}/like`,
-        method: "POST",
-      },
-      {
-        url: `http://localhost:3000/api/posts/like/${postId}`,
-        method: "PUT",
-      },
-    ];
 
-    for (const request of likeRequests) {
-      const response = await fetch(request.url, {
-        method: request.method,
-        headers: authHeaders,
-      });
+  const handleCommentDraftChange = (postId, value) => {
+    setCommentDrafts((current) => ({ ...current, [postId]: value }));
+  };
 
-      if (response.ok) {
-        fetchPosts();
-        return;
-      }
+  const handleReplyTarget = (postId, comment) => {
+    setReplyTargets((current) => ({ ...current, [postId]: comment }));
+  };
 
-      if (response.status !== 404) {
-        break;
-      }
+  const handleToggleComments = async (postId) => {
+    setOpenComments((current) => ({ ...current, [postId]: !current[postId] }));
+
+    if (!commentsByPost[postId]) {
+      await loadPostComments(postId);
+    }
+  };
+
+  const handleSubmitComment = async (postId) => {
+    const content = (commentDrafts[postId] || "").trim();
+    if (!content) {
+      return;
     }
 
-};
+    const replyTarget = replyTargets[postId];
+    await createComment({
+      post_id: postId,
+      content,
+      parent_comment_id: replyTarget?.id || null,
+    });
+
+    setCommentDrafts((current) => ({ ...current, [postId]: "" }));
+    setReplyTargets((current) => ({ ...current, [postId]: null }));
+    await loadPostComments(postId);
+  };
 
   return (
+    <div className="social-app">
+      <SocialNavbar currentUser={currentUser} onLogout={handleLogout} />
 
-    <div className="app-layout">
-
-      <nav className="navbar">
-
-        <h2>SocialFeed 🚀</h2>
-
-        <small>
-          <Link to={`/profile/${currentUserId}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-            Signed in as {currentUsername}
-          </Link>
-        </small>
-
-        <button onClick={handleLogout}>
-          Logout
-        </button>
-
-      </nav>
-
-      <div className="main-layout">
-
-        <aside className="sidebar">
-
-          <ul>
-
-          <li>🏠 Home</li>
-
-          <li>
-            <Link to={`/profile/${currentUserId}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-              👤 Profile
-            </Link>
-          </li>
-
-          <li>🔍 Explore</li>
-
-          <li>💬 Messages</li>
-
-        </ul>
-
-        </aside>
-
-        <main className="feed-section">
-
-          <div className="create-post">
-
-            <textarea
-              placeholder="What's on your mind?"
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
+      <main className="social-shell">
+        <aside className="social-rail social-rail-left">
+          <section className="social-profile-card social-card">
+            <img
+              className="social-profile-avatar"
+              src={currentUser.profile_pic || "https://ui-avatars.com/api/?name=User&background=0f172a&color=fff"}
+              alt="Current user"
             />
-
-            <button onClick={handleCreatePost}>
-              Create Post
+            <strong>{currentUser.username}</strong>
+            <p>{currentUser.bio || "No bio yet. Build your first strong profile note."}</p>
+            <button type="button" className="primary-chip" onClick={() => navigate(`/profile/${currentUser.id}`)}>
+              View profile
             </button>
+          </section>
 
-          </div>
-
-          <div className="posts-container">
-
-            {loadingPosts && <p>Loading posts...</p>}
-
-            {feedError && <p>{feedError}</p>}
-
-            {posts.map((post) => (
-
-              <div
-                key={post.id}
-                className="post-card"
-              >
-
-                <div className="post-header">
-
-                  <Link to={`/profile/${post.user_id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                    <div className="avatar">
-                      {post.username?.[0] || 'U'}
-                    </div>
-                  </Link>
-
-                  <div>
-
-                    <h4>
-                      <Link to={`/profile/${post.user_id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                        {post.username}
-                      </Link>
-                    </h4>
-
-                    <small>
-                      {new Date(post.created_at).toLocaleString()}
-                    </small>
-
-                  </div>
-
-                </div>
-
-                <p>{post.content}</p>
-
-                <div className="post-actions">
-
-                  <span
-  onClick={() => handleLike(post.id)}
-  style={{ cursor: "pointer" }}
->
-
-  {post.is_liked_by_me ? "💔 Unlike" : "❤️ Like"} {post.likes || 0}
-
-</span>
-
-                  <span
-                    onClick={() =>
-                      setOpenComments((prev) => ({
-
-                        ...prev,
-
-                        [post.id]: !prev[post.id]
-
-                      }))
-                    }
-                    style={{ cursor: "pointer" }}
-                  >
-
-                    💬 {comments[post.id]?.length || 0} Comments
-
-                  </span>
-
-                </div>
-
-                {openComments[post.id] && (
-
-                  <div className="comment-section">
-
-                    <input
-                      type="text"
-                      placeholder="Write a comment..."
-                      value={commentInputs[post.id] || ""}
-                      onChange={(e) =>
-                        setCommentInputs((prev) => ({
-
-                          ...prev,
-
-                          [post.id]: e.target.value
-
-                        }))
-                      }
-                    />
-
-                    <button
-                      onClick={() => handleComment(post.id)}
-                    >
-                      Comment
-                    </button>
-
-                    <div className="comments-list">
-
-                      {comments[post.id]?.map((comment) => (
-
-                        <div
-                          key={comment.id}
-                          className="comment-item"
-                        >
-
-                          <small>{comment.username}</small>
-                          <p>{comment.content}</p>
-
-                        </div>
-
-                      ))}
-
-                      {Array.isArray(post.liked_by) && post.liked_by.length > 0 && (
-                        <small>
-                          Liked by {post.liked_by.map((user) => user.username).join(", ")}
-                        </small>
-                      )}
-
-                    </div>
-
-                  </div>
-
-                )}
-
-              </div>
-
-            ))}
-
-          </div>
-
-        </main>
-
-        <aside className="right-sidebar">
-
-          <h3>Trends 🔥</h3>
-
-          <p>#React</p>
-
-          <p>#NodeJS</p>
-
-          <p>#PostgreSQL</p>
-
+          <section className="social-card mini-tray">
+            <h4>Shortcuts</h4>
+            <Link to="/feed">Home feed</Link>
+            <a href="#compose-post">Create post</a>
+            <button type="button" onClick={() => document.getElementById("compose-post")?.scrollIntoView({ behavior: "smooth" })}>
+              New post
+            </button>
+          </section>
         </aside>
 
-      </div>
+        <section className="social-feed-column">
+          <PostComposer onCreatePost={handleCreatePost} busy={publishing} />
 
-      <div className="mobile-nav">
+          <div className="feed-intro social-card">
+            <div>
+              <h2>Home Feed</h2>
+              <p>Fresh posts from the network, ordered newest first with infinite-scroll-ready pagination.</p>
+            </div>
+            <span className="composer-badge">{posts.length} posts</span>
+          </div>
 
-        <span>🏠</span>
+          {loading && <div className="social-card empty-state">Loading the feed...</div>}
+          {error && <div className="social-card empty-state error-state">{error}</div>}
 
-        <span>🔍</span>
+          <div className="feed-list">
+            {posts.map((post) => (
+              <PostCard
+                key={post.id}
+                post={post}
+                comments={commentsByPost[post.id] || []}
+                isOpen={Boolean(openComments[post.id])}
+                commentDraft={commentDrafts[post.id] || ""}
+                replyTarget={replyTargets[post.id] || null}
+                onToggleComments={handleToggleComments}
+                onToggleLike={handleToggleLike}
+                onCommentDraftChange={handleCommentDraftChange}
+                onSubmitComment={handleSubmitComment}
+                onReply={handleReplyTarget}
+              />
+            ))}
+          </div>
 
-        <span>➕</span>
+          <div ref={sentinelRef} className="feed-sentinel">
+            {loadingMore ? "Loading more posts..." : hasMore ? "Scroll for more" : "You are all caught up"}
+          </div>
+        </section>
 
-        <span>❤️</span>
-
-        <span>👤</span>
-
-      </div>
-
+        <aside className="social-rail social-rail-right">
+          <section className="social-card suggestion-card">
+            <h4>Why this structure works</h4>
+            <p>All feed actions now share one API layer and one relational model, which makes likes, comments, follows, and notifications consistent.</p>
+          </section>
+          <section className="social-card suggestion-card">
+            <h4>Next steps</h4>
+            <ul>
+              <li>Realtime notifications</li>
+              <li>Saved posts</li>
+              <li>Direct messages</li>
+            </ul>
+          </section>
+        </aside>
+      </main>
     </div>
-
   );
-
 }
 
 export default Feed;

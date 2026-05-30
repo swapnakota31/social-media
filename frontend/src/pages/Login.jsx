@@ -35,6 +35,8 @@ function Login() {
       localStorage.setItem("token", data.token);
       localStorage.setItem("username", data.user.username);
       localStorage.setItem("userId", data.user.id);
+      localStorage.setItem("bio", data.user.bio || "");
+      localStorage.setItem("profile_pic", data.user.profile_pic || "");
 
       alert("Login successful 🚀");
       navigate("/feed");    

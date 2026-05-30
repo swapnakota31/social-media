@@ -273,6 +273,100 @@
   background: #dbeafe;
 }
 
+.profile-stat-button {
+  text-align: left;
+  width: 100%;
+}
+
+.profile-stat-button strong {
+  margin-top: 6px;
+}
+
+.profile-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.46);
+  backdrop-filter: blur(10px);
+}
+
+.profile-modal {
+  width: min(560px, 100%);
+  max-height: min(78vh, 760px);
+  overflow: auto;
+  border: 1px solid var(--profile-border);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 30px 60px rgba(15, 23, 42, 0.24);
+  padding: 18px;
+}
+
+.profile-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.profile-modal-header h3 {
+  margin: 0;
+}
+
+.profile-modal-header button {
+  border-radius: 999px;
+  padding: 10px 14px;
+  border: 1px solid var(--profile-border);
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.profile-relationship-list {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-relationship-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--profile-border);
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.profile-relationship-item img {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.profile-relationship-item small {
+  color: var(--profile-muted);
+}
+
+.profile-posts-grid .post-card {
+  box-shadow: none;
+  border-radius: 18px;
+}
+
+.profile-posts-grid .comment-shell {
+  margin-top: 12px;
+}
+
+.profile-posts-grid .post-media-item {
+  height: 210px;
+}
+
+.profile-stat-card.profile-stat-button {
+  cursor: pointer;
+}
+
 .profile-empty-card,
 .profile-skeleton {
   margin-top: 20px;
