@@ -3,7 +3,18 @@ import { Link, useNavigate } from "react-router-dom";
 import PostCard from "../components/PostCard";
 import PostComposer from "../components/PostComposer";
 import SocialNavbar from "../components/SocialNavbar";
-import { createComment, createPost, fetchComments, fetchFeed, toggleLike } from "../services/socialApi";
+import {
+  cachePostMedia,
+  createComment,
+  createPost,
+  fetchComments,
+  fetchFeed,
+  mergePostState,
+  hydratePostWithCachedMedia,
+  deletePost,
+  updatePost,
+  toggleLike,
+} from "../services/socialApi";
 
 function Feed() {
   const navigate = useNavigate();
@@ -42,7 +53,7 @@ function Feed() {
       setError("");
 
       const data = await fetchFeed({ cursor: nextCursor || undefined });
-      const incoming = data.posts || [];
+      const incoming = (data.posts || []).map((post) => hydratePostWithCachedMedia(post));
 
       setPosts((current) => {
         const merged = append ? [...current, ...incoming] : incoming;
@@ -103,7 +114,25 @@ function Feed() {
     try {
       setPublishing(true);
       const data = await createPost({ content, mediaUrls });
-      setPosts((current) => [data.post, ...current]);
+      const optimisticMedia = Array.isArray(mediaUrls)
+        ? mediaUrls.map((url, index) => ({
+            id: `draft-media-${Date.now()}-${index}`,
+            url,
+            type: "image",
+            sort_order: index,
+          }))
+        : [];
+
+      const nextPost = {
+        ...data.post,
+        media: Array.isArray(data.post?.media) && data.post.media.length > 0 ? data.post.media : optimisticMedia,
+      };
+
+      if (nextPost.id) {
+        cachePostMedia(nextPost.id, nextPost.media);
+      }
+
+      setPosts((current) => [nextPost, ...current]);
       if (data.post?.id) {
         await loadPostComments(data.post.id);
       }
@@ -114,7 +143,37 @@ function Feed() {
 
   const handleToggleLike = async (postId) => {
     const data = await toggleLike(postId);
-    setPosts((current) => current.map((post) => (post.id === postId ? data.post : post)));
+    setPosts((current) => current.map((post) => (post.id === postId ? mergePostState(post, data.post) : post)));
+  };
+
+  const handleUpdatePost = async (postId, payload) => {
+    const data = await updatePost(postId, payload);
+    setPosts((current) => current.map((post) => (post.id === postId ? mergePostState(post, data.post) : post)));
+  };
+
+  const handleDeletePost = async (postId) => {
+    await deletePost(postId);
+    setPosts((current) => current.filter((post) => post.id !== postId));
+    setCommentsByPost((current) => {
+      const nextComments = { ...current };
+      delete nextComments[postId];
+      return nextComments;
+    });
+    setOpenComments((current) => {
+      const nextOpen = { ...current };
+      delete nextOpen[postId];
+      return nextOpen;
+    });
+    setCommentDrafts((current) => {
+      const nextDrafts = { ...current };
+      delete nextDrafts[postId];
+      return nextDrafts;
+    });
+    setReplyTargets((current) => {
+      const nextReplies = { ...current };
+      delete nextReplies[postId];
+      return nextReplies;
+    });
   };
 
   const handleCommentDraftChange = (postId, value) => {
@@ -157,7 +216,7 @@ function Feed() {
 
       <main className="social-shell">
         <aside className="social-rail social-rail-left">
-          <section className="social-profile-card social-card">
+          <Link to={`/profile/${currentUser.id}`} className="social-profile-card social-card social-profile-card-link">
             <img
               className="social-profile-avatar"
               src={currentUser.profile_pic || "https://ui-avatars.com/api/?name=User&background=0f172a&color=fff"}
@@ -165,10 +224,7 @@ function Feed() {
             />
             <strong>{currentUser.username}</strong>
             <p>{currentUser.bio || "No bio yet. Build your first strong profile note."}</p>
-            <button type="button" className="primary-chip" onClick={() => navigate(`/profile/${currentUser.id}`)}>
-              View profile
-            </button>
-          </section>
+          </Link>
 
           <section className="social-card mini-tray">
             <h4>Shortcuts</h4>
@@ -199,6 +255,7 @@ function Feed() {
               <PostCard
                 key={post.id}
                 post={post}
+                currentUserId={currentUser.id}
                 comments={commentsByPost[post.id] || []}
                 isOpen={Boolean(openComments[post.id])}
                 commentDraft={commentDrafts[post.id] || ""}
@@ -208,6 +265,8 @@ function Feed() {
                 onCommentDraftChange={handleCommentDraftChange}
                 onSubmitComment={handleSubmitComment}
                 onReply={handleReplyTarget}
+                onUpdatePost={handleUpdatePost}
+                onDeletePost={handleDeletePost}
               />
             ))}
           </div>

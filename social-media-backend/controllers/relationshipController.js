@@ -22,7 +22,11 @@ const hasTable = async (client, tableName) => {
     );
 
     const exists = Boolean(result.rows[0]?.exists);
-    schemaCache.set(key, exists);
+    if (exists) {
+        schemaCache.set(key, true);
+    } else {
+        schemaCache.delete(key);
+    }
     return exists;
 };
 

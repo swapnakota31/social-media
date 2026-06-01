@@ -3,14 +3,18 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import PostCard from "../components/PostCard";
 import SocialNavbar from "../components/SocialNavbar";
 import {
+  hydratePostWithCachedMedia,
   createComment,
+  deletePost,
   fetchComments,
   fetchFollowers,
   fetchFollowing,
   fetchProfile,
   fetchUserPosts,
+  mergePostState,
   followUser,
   toggleLike,
+  updatePost,
   unfollowUser,
   updateProfile,
   uploadProfilePicture,
@@ -37,6 +41,7 @@ function Profile() {
   const [openComments, setOpenComments] = useState({});
   const [loading, setLoading] = useState(true);
   const [loadingPosts, setLoadingPosts] = useState(true);
+  const [profileError, setProfileError] = useState("");
   const [editing, setEditing] = useState(false);
   const [bioInput, setBioInput] = useState("");
   const [picInput, setPicInput] = useState("");
@@ -66,8 +71,12 @@ function Profile() {
   const loadProfile = async () => {
     try {
       setLoading(true);
+      setProfileError("");
       const data = await fetchProfile(id);
       setUser(data.user);
+    } catch (error) {
+      setUser(null);
+      setProfileError(error.message || "Unable to load profile");
     } finally {
       setLoading(false);
     }
@@ -77,7 +86,7 @@ function Profile() {
     try {
       setLoadingPosts(true);
       const data = await fetchUserPosts(id);
-      const userPosts = data.posts || [];
+      const userPosts = (data.posts || []).map((post) => hydratePostWithCachedMedia(post));
       setPosts(userPosts);
       await Promise.all(userPosts.map((post) => loadComments(post.id)));
     } finally {
@@ -167,7 +176,37 @@ function Profile() {
 
   const handleToggleLike = async (postId) => {
     const data = await toggleLike(postId);
-    setPosts((current) => current.map((post) => (post.id === postId ? data.post : post)));
+    setPosts((current) => current.map((post) => (post.id === postId ? mergePostState(post, data.post) : post)));
+  };
+
+  const handleUpdatePost = async (postId, payload) => {
+    const data = await updatePost(postId, payload);
+    setPosts((current) => current.map((post) => (post.id === postId ? mergePostState(post, data.post) : post)));
+  };
+
+  const handleDeletePost = async (postId) => {
+    await deletePost(postId);
+    setPosts((current) => current.filter((post) => post.id !== postId));
+    setCommentsByPost((current) => {
+      const nextComments = { ...current };
+      delete nextComments[postId];
+      return nextComments;
+    });
+    setOpenComments((current) => {
+      const nextOpen = { ...current };
+      delete nextOpen[postId];
+      return nextOpen;
+    });
+    setCommentDrafts((current) => {
+      const nextDrafts = { ...current };
+      delete nextDrafts[postId];
+      return nextDrafts;
+    });
+    setReplyTargets((current) => {
+      const nextReplies = { ...current };
+      delete nextReplies[postId];
+      return nextReplies;
+    });
   };
 
   const handleCommentDraftChange = (postId, value) => {
@@ -253,8 +292,8 @@ function Profile() {
     return (
       <section className="profile-shell">
         <div className="profile-empty-card">
-          <h2>Profile Not Found</h2>
-          <p>This account may have been removed or does not exist.</p>
+          <h2>{profileError === "User not found" ? "Profile Not Found" : "Unable to Load Profile"}</h2>
+          <p>{profileError || "This account may have been removed or does not exist."}</p>
         </div>
       </section>
     );
@@ -314,7 +353,9 @@ function Profile() {
               <p className="profile-bio">{user.bio || "No bio added yet. This space is ready for a great intro."}</p>
 
               <div className="profile-meta-row">
-                <span>Joined {new Date(user.created_at).toLocaleDateString()}</span>
+                <span>
+                  Joined {user.created_at ? new Date(user.created_at).toLocaleDateString() : "recently"}
+                </span>
                 <span>{user.followers_count || 0} followers</span>
                 <span>{user.following_count || 0} following</span>
               </div>
@@ -429,6 +470,7 @@ function Profile() {
                 <PostCard
                   key={post.id}
                   post={post}
+                  currentUserId={currentUser.id}
                   comments={commentsByPost[post.id] || []}
                   isOpen={Boolean(openComments[post.id])}
                   commentDraft={commentDrafts[post.id] || ""}
@@ -438,6 +480,8 @@ function Profile() {
                   onCommentDraftChange={handleCommentDraftChange}
                   onSubmitComment={handleSubmitComment}
                   onReply={handleReplyTarget}
+                  onUpdatePost={handleUpdatePost}
+                  onDeletePost={handleDeletePost}
                 />
               ))}
             </div>

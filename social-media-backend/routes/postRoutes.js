@@ -7,6 +7,8 @@ const {
     createPost,
     getPosts,
     likePost,
+    updatePost,
+    deletePost,
     uploadPostMedia
 
 
@@ -20,5 +22,7 @@ router.get("/feed", requireAuth, getPosts);
 router.post("/upload-media", requireAuth, upload.array("images", 10), uploadPostMedia);
 router.post("/:postId/like", requireAuth, likePost);
 router.put("/like/:postId", requireAuth, likePost);
+router.put("/:postId", requireAuth, updatePost);
+router.delete("/:postId", requireAuth, deletePost);
     
 module.exports = router;

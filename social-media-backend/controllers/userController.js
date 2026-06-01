@@ -1,23 +1,76 @@
 const pool = require("../db");
 const cloudinary = require("../config/cloudinary");
 
+const schemaCache = new Map();
+
 const hasTable = async (tableName) => {
+  const cacheKey = `table:${tableName}`;
+
+  if (schemaCache.has(cacheKey)) {
+    return schemaCache.get(cacheKey);
+  }
+
   const result = await pool.query(
     `
-    SELECT to_regclass($1) IS NOT NULL AS exists
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+      AND table_name = $1
+    ) AS exists
     `,
-    [tableName]
+    [tableName.replace(/^public\./, "")]
   );
 
-  return Boolean(result.rows[0]?.exists);
+  const exists = Boolean(result.rows[0]?.exists);
+  schemaCache.set(cacheKey, exists);
+  return exists;
+};
+
+const hasColumn = async (tableName, columnName) => {
+  const cacheKey = `column:${tableName}.${columnName}`;
+
+  if (schemaCache.has(cacheKey)) {
+    return schemaCache.get(cacheKey);
+  }
+
+  const result = await pool.query(
+    `
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+      AND table_name = $1
+      AND column_name = $2
+    ) AS exists
+    `,
+    [tableName, columnName]
+  );
+
+  const exists = Boolean(result.rows[0]?.exists);
+  schemaCache.set(cacheKey, exists);
+  return exists;
 };
 
 const getUserProfile = async (req, res) => {
   try {
     const { id } = req.params;
-    const viewerId = req.user.id;
+    const viewerId = req.user?.id || null;
 
+    const bioEnabled = await hasColumn("users", "bio");
+    const profilePicEnabled = await hasColumn("users", "profile_pic");
+    const createdAtEnabled = await hasColumn("users", "created_at");
+    const emailEnabled = await hasColumn("users", "email");
     const followsEnabled = await hasTable("public.follows");
+    const postsEnabled = await hasTable("posts");
+    const postLikesEnabled = postsEnabled && (await hasColumn("posts", "likes"));
+
+    const userColumnSelect = `
+        ${emailEnabled ? "u.email," : "NULL::text AS email,"}
+        ${bioEnabled ? "u.bio," : "NULL::text AS bio,"}
+        ${profilePicEnabled ? "u.profile_pic," : "NULL::text AS profile_pic,"}
+        ${createdAtEnabled ? "u.created_at," : "NULL::timestamptz AS created_at,"}
+    `;
 
     const followsSelect = followsEnabled
       ? `
@@ -58,28 +111,49 @@ const getUserProfile = async (req, res) => {
       `
       : "";
 
+    const postStatsSelect = postsEnabled
+      ? postLikesEnabled
+        ? `
+          COALESCE(post_stats.total_posts, 0)::int AS total_posts,
+          COALESCE(post_stats.total_likes, 0)::int AS total_likes,
+        `
+        : `
+          COALESCE(post_stats.total_posts, 0)::int AS total_posts,
+          0::int AS total_likes,
+        `
+      : `
+        0::int AS total_posts,
+        0::int AS total_likes,
+      `;
+
+    const postStatsJoin = postsEnabled
+      ? `
+      LEFT JOIN (
+        SELECT
+          user_id,
+          COUNT(*)::int AS total_posts${postLikesEnabled ? ", COALESCE(SUM(likes), 0)::int AS total_likes" : ""}
+        FROM posts
+        GROUP BY user_id
+      ) post_stats ON post_stats.user_id = u.id
+      `
+      : "";
+
+    const userParams = followsEnabled ? [id, viewerId] : [id];
+
     const userResult = await pool.query(
       `
       SELECT
         u.id,
         u.username,
-        u.email,
-        u.bio,
-        u.profile_pic,
-        u.created_at,
-        COALESCE(post_stats.total_posts, 0)::int AS total_posts,
-        COALESCE(post_stats.total_likes, 0)::int AS total_likes,
+        ${userColumnSelect}
+        ${postStatsSelect}
         ${followsSelect}
       FROM users u
-      LEFT JOIN (
-        SELECT user_id, COUNT(*)::int AS total_posts, COALESCE(SUM(likes), 0)::int AS total_likes
-        FROM posts
-        GROUP BY user_id
-      ) post_stats ON post_stats.user_id = u.id
+      ${postStatsJoin}
       ${followsJoin}
       WHERE u.id = $1
       `,
-      [id, viewerId]
+      userParams
     );
 
     if (userResult.rows.length === 0) {
@@ -89,7 +163,7 @@ const getUserProfile = async (req, res) => {
     return res.json({ user: userResult.rows[0] });
   } catch (error) {
     console.log(error);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -152,6 +226,8 @@ const getUserPosts = async (req, res) => {
       `
       : `'[]'::json AS media`;
 
+    const postParams = postLikesEnabled ? [id, viewerId] : [id];
+
     const postsResult = await pool.query(
       `
       SELECT
@@ -172,13 +248,13 @@ const getUserPosts = async (req, res) => {
       WHERE p.user_id = $1
       ORDER BY p.created_at DESC
       `,
-      [id, viewerId]
+      postParams
     );
 
     res.json({ posts: postsResult.rows });
   } catch (error) {
     console.log(error);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -205,7 +281,7 @@ const updateProfile = async (req, res) => {
     res.json({ message: "Profile updated", user: result.rows[0] });
   } catch (error) {
     console.log(error);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -268,7 +344,7 @@ const uploadProfilePicture = async (req, res) => {
     });
   } catch (error) {
     console.log(error);
-    return res.status(500).json({ message: "Image upload failed" });
+    return res.status(500).json({ message: error.message });
   }
 };
 

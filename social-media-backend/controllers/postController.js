@@ -517,9 +517,132 @@ const likePost = async (req, res) => {
     }
 };
 
+const updatePost = async (req, res) => {
+    try {
+        const { postId } = req.params;
+        const userId = req.user.id;
+        const { content } = req.body;
+
+        if (typeof content !== "string" || !content.trim()) {
+            return res.status(400).json({ message: "Post content is required" });
+        }
+
+        const client = await pool.connect();
+
+        try {
+            await client.query("BEGIN");
+
+            const existingPost = await client.query(
+                `
+                SELECT id, user_id
+                FROM posts
+                WHERE id = $1
+                `,
+                [postId]
+            );
+
+            if (existingPost.rows.length === 0) {
+                await client.query("ROLLBACK");
+                return res.status(404).json({ message: "Post not found" });
+            }
+
+            if (Number(existingPost.rows[0].user_id) !== Number(userId)) {
+                await client.query("ROLLBACK");
+                return res.status(403).json({ message: "You can only edit your own post" });
+            }
+
+            const postsHasUpdatedAt = await hasColumn(client, "posts", "updated_at");
+
+            await client.query(
+                `
+                UPDATE posts
+                SET content = $1
+                ${postsHasUpdatedAt ? ", updated_at = NOW()" : ""}
+                WHERE id = $2 AND user_id = $3
+                `,
+                [content.trim(), postId, userId]
+            );
+
+            const updatedPost = await fetchPostCard(client, postId, userId);
+
+            await client.query("COMMIT");
+
+            return res.json({
+                message: "Post updated",
+                post: updatedPost,
+            });
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.log(error.message);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
+const deletePost = async (req, res) => {
+    try {
+        const { postId } = req.params;
+        const userId = req.user.id;
+
+        const client = await pool.connect();
+
+        try {
+            await client.query("BEGIN");
+
+            const existingPost = await client.query(
+                `
+                SELECT id, user_id
+                FROM posts
+                WHERE id = $1
+                `,
+                [postId]
+            );
+
+            if (existingPost.rows.length === 0) {
+                await client.query("ROLLBACK");
+                return res.status(404).json({ message: "Post not found" });
+            }
+
+            if (Number(existingPost.rows[0].user_id) !== Number(userId)) {
+                await client.query("ROLLBACK");
+                return res.status(403).json({ message: "You can only delete your own post" });
+            }
+
+            await client.query(
+                `
+                DELETE FROM posts
+                WHERE id = $1 AND user_id = $2
+                `,
+                [postId, userId]
+            );
+
+            await client.query("COMMIT");
+
+            return res.json({
+                message: "Post deleted",
+                postId: Number(postId),
+            });
+        } catch (error) {
+            await client.query("ROLLBACK");
+            throw error;
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.log(error.message);
+        res.status(500).json({ message: "Server error" });
+    }
+};
+
 module.exports = {
     createPost,
     getPosts,
     likePost,
+    updatePost,
+    deletePost,
     uploadPostMedia,
 };
